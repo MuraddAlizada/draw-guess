@@ -37,6 +37,12 @@ export function startSession(req: Request, res: Response) {
         id: session.id,
         word: session.word,
         endsAt: session.endsAt,
+        startedAt: session.startedAt,
+        isActive: session.isActive,
+        artistId: session.artistId,
+        currentGame: session.currentGame,
+        maxGames: session.maxGames,
+        players: session.players || [],
       },
     });
   } catch (error: any) {
@@ -152,41 +158,67 @@ export function submitGuess(req: Request, res: Response) {
     updateSession(id, { guesses: updatedGuesses, players: currentPlayers });
 
     if (isCorrect) {
-      // Game ended with correct guess - save game result and start next game
-      // First update with new guess and players, then finish game
-      const sessionWithNewGuess = getSession(id);
-      if (sessionWithNewGuess) {
+      // Check if ALL players (excluding artist) have found the answer
+      const sessionWithNewGuess = getSession(id) || session;
+      const allPlayers = sessionWithNewGuess.players || [];
+      const playersToCheck = allPlayers.filter(p => p !== session.artistId); // Exclude artist
+      
+      // Get all players who have found the correct answer
+      const playersWhoFoundIt = sessionWithNewGuess.guesses
+        .filter(g => g.isCorrect)
+        .map(g => g.userId);
+      const uniquePlayersWhoFoundIt = [...new Set(playersWhoFoundIt)];
+      
+      // Check if all players have found it (or if no players joined yet, just this one)
+      const allPlayersFoundIt = playersToCheck.length === 0 || 
+        (playersToCheck.length > 0 && uniquePlayersWhoFoundIt.length >= playersToCheck.length);
+      
+      // Only transition to next game if ALL players have found the answer
+      if (allPlayersFoundIt) {
+        // All players found it - finish current game and start next
         finishCurrentGameAndStartNext(id, sessionWithNewGuess);
-      } else {
-        finishCurrentGameAndStartNext(id, session);
-      }
-      
-      // Get updated session after finishing current game and starting next
-      const updatedSession = getSession(id);
-      
-      // Return info about next game or completion
-      if (updatedSession && !updatedSession.isActive) {
-        // All games completed
+        
+        // Get updated session after finishing current game and starting next
+        const updatedSession = getSession(id);
+        
+        // Return info about next game or completion
+        if (updatedSession && !updatedSession.isActive) {
+          // All games completed
+          res.json({
+            isCorrect,
+            pointsEarned,
+            correctWord: session.word,
+            allGamesCompleted: true,
+            allPlayersFoundAnswer: true,
+          });
+          return;
+        }
+        
+        // Next game started
         res.json({
           isCorrect,
           pointsEarned,
           correctWord: session.word,
-          allGamesCompleted: true,
+          nextGameStarted: true,
+          currentGame: updatedSession?.currentGame || 1,
+          maxGames: updatedSession?.maxGames || 5,
+          newWord: updatedSession?.word, // Send new word for artist
+          allPlayersFoundAnswer: true,
+        });
+        return;
+      } else {
+        // Not all players found it yet - game continues
+        // Return success but don't transition to next game
+        res.json({
+          isCorrect,
+          pointsEarned,
+          correctWord: session.word,
+          allPlayersFoundAnswer: false,
+          playersFoundCount: uniquePlayersWhoFoundIt.length,
+          totalPlayersCount: playersToCheck.length,
         });
         return;
       }
-      
-      // Next game started
-      res.json({
-        isCorrect,
-        pointsEarned,
-        correctWord: session.word,
-        nextGameStarted: true,
-        currentGame: updatedSession?.currentGame || 1,
-        maxGames: updatedSession?.maxGames || 5,
-        newWord: updatedSession?.word, // Send new word for artist
-      });
-      return;
     }
 
     res.json({
@@ -289,6 +321,16 @@ export function endSession(req: Request, res: Response) {
       return res.status(404).json({ error: 'Session tapılmadı' });
     }
 
+    // Check if all players found the answer before time ended
+    const allPlayers = session.players || [];
+    const playersToCheck = allPlayers.filter(p => p !== session.artistId);
+    const playersWhoFoundIt = session.guesses
+      .filter(g => g.isCorrect)
+      .map(g => g.userId);
+    const uniquePlayersWhoFoundIt = [...new Set(playersWhoFoundIt)];
+    const allPlayersFoundIt = playersToCheck.length === 0 || 
+      (playersToCheck.length > 0 && uniquePlayersWhoFoundIt.length >= playersToCheck.length);
+
     // Finish current game and start next (or end if all games done)
     // Get latest session before finishing to ensure we have all guesses
     const latestSession = getSession(id) || session;
@@ -310,6 +352,8 @@ export function endSession(req: Request, res: Response) {
           totalScores: updatedSession.totalScores || {},
           gameHistory: updatedSession.gameHistory || [],
           allGamesCompleted: true,
+          timeEnded: true,
+          allPlayersFoundAnswer: allPlayersFoundIt,
         },
       });
     } else {
@@ -323,6 +367,8 @@ export function endSession(req: Request, res: Response) {
           word: updatedSession.word,
           endsAt: updatedSession.endsAt,
           totalScores: updatedSession.totalScores || {},
+          timeEnded: true,
+          allPlayersFoundAnswer: allPlayersFoundIt,
         },
       });
     }

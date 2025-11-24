@@ -229,9 +229,13 @@ async function startNewGame(userId) {
             viewerCanvasContainer.style.display = "none";
         }
         
-        // Show players list for artist
+        // Show players list for artist - ALWAYS show
         if (playersListSection) {
             playersListSection.style.display = "block";
+        }
+        if (playersList) {
+            // Initialize players list with just the artist
+            updatePlayersList(currentSession);
         }
         
         // Update main-content layout for artist (drawing section + players list)
@@ -246,8 +250,16 @@ async function startNewGame(userId) {
             newGameBtn.style.display = "block";
         }
         
-        startTimer(new Date(currentSession.endsAt));
+        // Start timer immediately when artist starts the game
+        // Timer starts counting down from 60 seconds as soon as game is created
+        if (currentSession.endsAt) {
+            const endTime = currentSession.endsAt instanceof Date 
+                ? currentSession.endsAt 
+                : new Date(currentSession.endsAt);
+            startTimer(endTime);
+        }
         
+        // Start polling to get updates
         startPolling();
     } catch (error) {
         alert("Xəta: " + error.message);
@@ -265,7 +277,8 @@ async function autoSaveDrawing() {
         if (dataURL === lastSavedDrawing) return;
         lastSavedDrawing = dataURL;
         
-        const response = await fetch(`${API_URL}/sessions/${currentSession.id}/drawing`, {
+        const encodedSessionId = encodeURIComponent(currentSession.id);
+        const response = await fetch(`${API_URL}/sessions/${encodedSessionId}/drawing`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ drawingData: dataURL })
@@ -319,7 +332,8 @@ async function submitGuess() {
     }
 
     try {
-        const response = await fetch(`${API_URL}/sessions/${currentSession.id}/guess`, {
+        const encodedSessionId = encodeURIComponent(currentSession.id);
+        const response = await fetch(`${API_URL}/sessions/${encodedSessionId}/guess`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ userId, guess })
@@ -335,10 +349,38 @@ async function submitGuess() {
         addGuessToList(userId, guess, data.isCorrect, data.pointsEarned);
         
         if (data.isCorrect) {
-            resultMessage.textContent = `🎉 Düzgün! +${data.pointsEarned} xal qazandınız!`;
+            // Show success notification modal first
+            showCorrectAnswerFoundNotification(data.pointsEarned);
+            
+            // Also show success message with points earned
+            resultMessage.textContent = `🎉 Təbriklər! Düzgün cavab tapdınız və ${data.pointsEarned} xal qazandınız!`;
             resultMessage.className = "result-message success";
+            
+            // Disable guessing immediately (player already found it)
             guessInput.disabled = true;
             submitGuessBtn.disabled = true;
+            
+            // Check if all players found the answer
+            if (data.allPlayersFoundAnswer === false) {
+                // Not all players found it yet - show waiting message after a delay
+                setTimeout(() => {
+                    resultMessage.textContent = `⏳ Digər oyunçuların cavab tapmasını gözləyirik... (${data.playersFoundCount || 0}/${data.totalPlayersCount || 0})`;
+                    resultMessage.className = "result-message info";
+                }, 2500);
+                
+                // Refresh to get updates
+                setTimeout(async () => {
+                    await refreshSessionInfo();
+                }, 1000);
+                return;
+            }
+            
+            // All players found it - proceed with game transition
+            guessInput.disabled = true;
+            submitGuessBtn.disabled = true;
+            
+            // Keep success message visible for 3 seconds first
+            // Then show next game notification
             
             // Check if all games completed or next game started
             if (data.allGamesCompleted) {
@@ -348,39 +390,35 @@ async function submitGuess() {
                     if (currentSession) {
                         await showFinalResults(currentSession);
                     }
-                }, 1500);
+                }, 3000);
             } else if (data.nextGameStarted) {
-                // Next game started - for artist, clear canvas and prepare for new game
-                if (isArtist) {
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    lastSavedDrawing = null;
-                    saveDrawingBtn.disabled = false;
-                    guessInput.disabled = false;
-                    submitGuessBtn.disabled = false;
-                    
-                    // Update word display if new word is provided
-                    if (data.newWord && wordDisplay) {
-                        wordDisplay.textContent = `Word: ${data.newWord}`;
-                        wordDisplay.style.display = "block";
+                // Wait 3 seconds to show success message, then show next game notification
+                setTimeout(() => {
+                    // Show next game notification after success message - ONLY for artist
+                    if (isArtist) {
+                        // Show artist-specific notification
+                        showArtistNextWordModal(data.newWord);
                     }
-                }
-                
-                // Show notification immediately
-                showNextGameNotification();
+                    // Guest-lər üçün bildiriş göstərilmir
+                    
+                    // Clear success message
+                    resultMessage.textContent = "";
+                    resultMessage.className = "";
+                }, 3000);
                 
                 // Wait a bit then refresh to get full session info
                 setTimeout(async () => {
                     await refreshSessionInfo();
                     
-                    // For artist, ensure everything is enabled
-                    if (isArtist && currentSession && currentSession.isActive) {
+                    // Re-enable inputs for next game
+                    if (currentSession && currentSession.isActive) {
                         guessInput.disabled = false;
                         submitGuessBtn.disabled = false;
-                        saveDrawingBtn.disabled = false;
-                        resultMessage.textContent = "";
-                        resultMessage.className = "";
+                        if (isArtist) {
+                            saveDrawingBtn.disabled = false;
+                        }
                     }
-                }, 1000);
+                }, 4000);
             } else {
                 // Just refresh
                 setTimeout(async () => {
@@ -388,7 +426,8 @@ async function submitGuess() {
                 }, 1000);
             }
         } else {
-            resultMessage.textContent = "❌ Yanlış təxmin. Yenidən cəhd edin!";
+            // Wrong guess
+            resultMessage.textContent = "❌ Yanlış texmin. Yenidən cəhd edin!";
             resultMessage.className = "result-message error";
         }
 
@@ -487,7 +526,13 @@ async function handleTimeUp() {
     
     if (currentSession && currentSession.id) {
         try {
-            const response = await fetch(`${API_URL}/sessions/${currentSession.id}/end`, {
+            // Check if current user found the answer before time ended
+            const userId = userIdInput.value.trim();
+            const userFoundIt = currentSession.guesses && 
+                currentSession.guesses.some(g => g.userId === userId && g.isCorrect);
+            
+            const encodedSessionId = encodeURIComponent(currentSession.id);
+            const response = await fetch(`${API_URL}/sessions/${encodedSessionId}/end`, {
                 method: "POST"
             });
             
@@ -500,6 +545,18 @@ async function handleTimeUp() {
             }
             
             const data = await response.json();
+            
+            // Show notification based on whether user found the answer
+            if (!isArtist && !userFoundIt) {
+                // Player couldn't find the answer
+                showTimeUpNoAnswerNotification();
+            } else if (!isArtist && userFoundIt) {
+                // Player found it but waiting for others
+                const pointsEarned = currentSession.guesses.find(g => 
+                    g.userId === userId && g.isCorrect
+                )?.pointsEarned || 0;
+                showTimeUpFoundAnswerNotification(pointsEarned);
+            }
             
             // Check if all games completed
             if (data.session && data.session.allGamesCompleted) {
@@ -517,13 +574,21 @@ async function handleTimeUp() {
                 if (currentSession && currentSession.isActive) {
                     // Restart polling for next game
                     startPolling();
-                    showNextGameNotification();
+                    
+                    // Show appropriate notification - ONLY for artist
+                    if (isArtist) {
+                        // Artist notification will be shown when new word is available
+                        if (currentSession.word) {
+                            showArtistNextWordModal(currentSession.word);
+                        }
+                    }
+                    // Guest-lər üçün bildiriş göstərilmir
                 } else if (currentSession && currentSession.allGamesCompleted) {
                     // Stop polling
                     if (pollingInterval) clearInterval(pollingInterval);
                     await showFinalResults(currentSession);
                 }
-            }, 1000);
+            }, 1500);
         } catch (error) {
             console.error("Session end error:", error);
             // Try to refresh anyway
@@ -563,7 +628,15 @@ async function refreshSessionInfo() {
     try {
         const userId = userIdInput.value.trim();
         const sessionId = currentSession.id;
-        const response = await fetch(`${API_URL}/sessions/${sessionId}?userId=${userId}`);
+        
+        if (!sessionId) {
+            console.error("refreshSessionInfo: No session ID");
+            return;
+        }
+        
+        const encodedSessionId = encodeURIComponent(sessionId);
+        const encodedUserId = encodeURIComponent(userId);
+        const response = await fetch(`${API_URL}/sessions/${encodedSessionId}?userId=${encodedUserId}`);
         
         if (!response.ok) {
             // If session not found or error, stop polling
@@ -578,6 +651,20 @@ async function refreshSessionInfo() {
         const session = data.session;
         
         if (!session) return;
+        
+        // Store previous session state BEFORE updating currentSession
+        // Make a proper copy to avoid reference issues
+        const previousSession = {
+            ...currentSession,
+            players: currentSession.players ? [...currentSession.players] : [],
+            gameHistory: currentSession.gameHistory ? [...currentSession.gameHistory] : [],
+            guesses: currentSession.guesses ? [...currentSession.guesses] : []
+        };
+        const previousPlayers = previousSession.players || [];
+        const previousGameHistory = previousSession.gameHistory || [];
+        const previousWord = previousSession.word;
+        const previousStartedAt = previousSession.startedAt;
+        const previousCurrentGame = previousSession.currentGame || 1;
         
         // Check if all games completed
         if (session.allGamesCompleted) {
@@ -597,20 +684,54 @@ async function refreshSessionInfo() {
             maxGamesDisplay.textContent = session.maxGames || 5;
         }
         
-        // Update word display for artist when new game starts
-        if (isArtist && session.word) {
-            wordDisplay.textContent = `Word: ${session.word}`;
-            wordDisplay.style.display = "block";
+        // Check if this is a new game (different startedAt time, different word, or game number increased)
+        const isNewGame = (previousStartedAt && session.startedAt && 
+            new Date(previousStartedAt).getTime() !== new Date(session.startedAt).getTime()) ||
+            (previousWord && previousWord !== session.word) ||
+            (session.currentGame > previousCurrentGame);
+        
+        // Check if word changed (new game started)
+        const wordChanged = previousWord && session.word && previousWord !== session.word;
+        
+        // Check if someone found the correct answer by checking gameHistory
+        // When a correct guess is made, a new game result is added to gameHistory
+        const currentGameHistory = session.gameHistory || [];
+        const newGameResult = currentGameHistory.length > previousGameHistory.length 
+            ? currentGameHistory[currentGameHistory.length - 1] 
+            : null;
+        
+        // Notify artist if someone found the answer (check for new correct guesses)
+        if (isArtist) {
+            const previousCorrectGuesses = previousSession.guesses
+                .filter(g => g.isCorrect)
+                .map(g => g.userId);
+            const currentCorrectGuesses = session.guesses
+                .filter(g => g.isCorrect)
+                .map(g => g.userId);
             
-            // Check if this is a new game (different startedAt time or different word)
-            const previousStartedAt = currentSession?.startedAt;
-            const previousWord = currentSession?.word;
-            const isNewGame = (previousStartedAt && session.startedAt && 
-                new Date(previousStartedAt).getTime() !== new Date(session.startedAt).getTime()) ||
-                (previousWord && previousWord !== session.word);
+            // Find newly correct guesses (players who just found the answer)
+            const newCorrectGuesses = session.guesses.filter(g => 
+                g.isCorrect && 
+                !previousCorrectGuesses.includes(g.userId)
+            );
+            
+            // Show notification for each new player who found it
+            newCorrectGuesses.forEach(guess => {
+                showCorrectAnswerNotification(guess.userId, guess.guess, guess.pointsEarned);
+            });
+        }
+        
+        // Update word display for artist - always update when word is available
+        if (isArtist && session.word) {
+            // Always update word display - check if it actually changed
+            const wordActuallyChanged = previousWord !== session.word;
+            if (wordActuallyChanged || !previousWord) {
+                wordDisplay.textContent = `Word: ${session.word}`;
+                wordDisplay.style.display = "block";
+            }
             
             // If new game started, clear canvas and reset drawing
-            if (isNewGame && currentSession) {
+            if (isNewGame) {
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 lastSavedDrawing = null;
                 saveDrawingBtn.disabled = false;
@@ -618,9 +739,16 @@ async function refreshSessionInfo() {
                 submitGuessBtn.disabled = false;
                 resultMessage.textContent = "";
                 resultMessage.className = "";
+                
+                // Show notification for new game (but not if we already showed correct answer notification)
+                // ONLY for artist, not for guests
+                if (isArtist && session.currentGame > 1 && !newGameResult) {
+                    showNextGameNotification();
+                }
             }
         }
         
+        // Update currentSession
         currentSession = session;
         
         // For non-artist: show live drawing in canvas (readonly)
@@ -651,16 +779,15 @@ async function refreshSessionInfo() {
         }
         
         // Check if session was restarted (new word, new artist)
-        // Store previous startedAt before updating currentSession
-        const previousStartedAt = currentSession?.startedAt;
         if (session.startedAt && previousStartedAt) {
             const oldTime = new Date(previousStartedAt).getTime();
             const newTime = new Date(session.startedAt).getTime();
             const sessionChanged = oldTime !== newTime;
             
+            // Guest-lər üçün "artist yeni oyun başlatdı" bildirişi göstərilmir
+            // Yalnız drawing-i təmizlə
             if (sessionChanged && !isArtist) {
-                showSessionRestartNotification();
-                // Clear old drawing
+                // Clear old drawing without showing notification
                 if (viewerCanvas) {
                     const viewerCtx = viewerCanvas.getContext("2d");
                     viewerCtx.clearRect(0, 0, viewerCanvas.width, viewerCanvas.height);
@@ -679,11 +806,25 @@ async function refreshSessionInfo() {
         
         // Update players list for artist - always show if artist
         if (isArtist) {
+            // Always show players list section for artist
             if (playersListSection) {
                 playersListSection.style.display = "block";
             }
             if (playersList) {
+                // Get current players list (exclude artist from comparison)
+                const currentPlayers = (session.players || []).filter(p => p !== session.artistId);
+                const prevPlayersFiltered = previousPlayers.filter(p => p !== session.artistId);
+                
+                // Check if new players joined by comparing arrays
+                const newPlayers = currentPlayers.filter(p => !prevPlayersFiltered.includes(p));
+                
+                // Always update players list to ensure it's current
                 updatePlayersList(session);
+                
+                // Show notification if new players joined
+                if (newPlayers.length > 0) {
+                    showPlayerJoinedNotification(newPlayers);
+                }
             }
         }
         
@@ -698,7 +839,10 @@ async function refreshSessionInfo() {
                 if (currentSession && currentSession.isActive) {
                     // Next game started - restart polling
                     startPolling();
-                    showNextGameNotification();
+                    // Show notification ONLY for artist, not for guests
+                    if (isArtist) {
+                        showNextGameNotification();
+                    }
                 } else if (currentSession && currentSession.allGamesCompleted) {
                     // All games completed
                     if (timerInterval) clearInterval(timerInterval);
@@ -737,11 +881,28 @@ async function joinSession(sessionId) {
             return;
         }
 
-        const response = await fetch(`${API_URL}/sessions/${sessionId}?userId=${userId}`);
+        if (!sessionId || !sessionId.trim()) {
+            alert("Session ID daxil edin!");
+            return;
+        }
+
+        // Trim and encode session ID for URL
+        const trimmedSessionId = sessionId.trim();
+        const encodedSessionId = encodeURIComponent(trimmedSessionId);
+        const encodedUserId = encodeURIComponent(userId);
+        
+        const response = await fetch(`${API_URL}/sessions/${encodedSessionId}?userId=${encodedUserId}`);
         
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || "Session tapılmadı");
+            let errorMessage = "Session tapılmadı";
+            try {
+                const error = await response.json();
+                errorMessage = error.error || errorMessage;
+            } catch (e) {
+                // If response is not JSON, use status text
+                errorMessage = response.status === 404 ? "Session tapılmadı" : "Xəta baş verdi";
+            }
+            throw new Error(errorMessage);
         }
 
         const data = await response.json();
@@ -806,11 +967,19 @@ async function joinSession(sessionId) {
             newGameBtn.style.display = "none";
         }
         
-        if (currentSession.isActive) {
-            startTimer(new Date(currentSession.endsAt));
+        // Start timer immediately when joining (game is already running)
+        // Timer continues from where it is - doesn't restart
+        if (currentSession.isActive && currentSession.endsAt) {
+            const endTime = currentSession.endsAt instanceof Date 
+                ? currentSession.endsAt 
+                : new Date(currentSession.endsAt);
+            startTimer(endTime);
         }
         
+        // Start polling to get updates
         startPolling();
+        
+        // Refresh session info to get latest data
         await refreshSessionInfo();
     } catch (error) {
         alert("Xəta: " + error.message);
@@ -1044,15 +1213,128 @@ function showSessionRestartNotification() {
     }, 5000);
 }
 
-function showNextGameNotification() {
+function showCorrectAnswerNotification(userId, guess, points) {
     const notification = document.createElement("div");
     notification.className = "session-restart-notification";
+    notification.style.backgroundColor = "rgba(76, 175, 80, 0.95)";
+    notification.innerHTML = `
+        <div class="notification-content">
+            <h3>🎉 Düzgün Cavab Tapıldı!</h3>
+            <p><strong>${userId}</strong> düzgün təxmin etdi: "<strong>${guess}</strong>"</p>
+            <p>+${points} xal qazandı.</p>
+            <button class="btn btn-primary" onclick="this.parentElement.parentElement.remove()">Başa düşdüm</button>
+        </div>
+    `;
+    document.body.appendChild(notification);
+    
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+        if (notification.parentElement) {
+            notification.remove();
+        }
+    }, 5000);
+}
+
+function showArtistNextWordModal(newWord) {
+    const modal = document.createElement("div");
+    modal.className = "modal-overlay";
+    modal.style.display = "flex";
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 500px;">
+            <h2>🎨 Növbəti Söz</h2>
+            <p style="font-size: 18px; margin: 20px 0;">Növbəti söz gəldi! İndi çəkməyə başlaya bilərsiniz.</p>
+            <div style="background: #f0f0f0; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                <p style="font-weight: bold; font-size: 24px; text-align: center; margin: 0;">${newWord || 'Yüklənir...'}</p>
+            </div>
+            <p style="font-size: 14px; color: #666; margin-top: 10px;">Kimisindən seçin və çəkməyə başlayın.</p>
+            <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove()">Başa düşdüm</button>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+        if (modal.parentElement) {
+            modal.remove();
+        }
+    }, 5000);
+}
+
+function showNextDrawingNotification() {
+    const notification = document.createElement("div");
+    notification.className = "session-restart-notification";
+    notification.style.backgroundColor = "rgba(33, 150, 243, 0.95)";
     const currentGame = currentSession?.currentGame || 1;
     const maxGames = currentSession?.maxGames || 5;
     notification.innerHTML = `
         <div class="notification-content">
-            <h3>🎮 Növbəti Oyun Başladı!</h3>
-            <p>Oyun ${currentGame}/${maxGames} başladı. Yeni söz seçildi!</p>
+            <h3>🎨 Növbəti Çəkmə</h3>
+            <p>Növbəti çəkməyə keçildi. Artist birazdan çəkməyə başlayacaq, kimisindən seçin.</p>
+            <p style="font-size: 14px; margin-top: 10px;">Oyun ${currentGame}/${maxGames}</p>
+            <button class="btn btn-primary" onclick="this.parentElement.parentElement.remove()">Başa düşdüm</button>
+        </div>
+    `;
+    document.body.appendChild(notification);
+    
+    // Auto-remove after 4 seconds
+    setTimeout(() => {
+        if (notification.parentElement) {
+            notification.remove();
+        }
+    }, 4000);
+}
+
+function showTimeUpNoAnswerNotification() {
+    const notification = document.createElement("div");
+    notification.className = "session-restart-notification";
+    notification.style.backgroundColor = "rgba(244, 67, 54, 0.95)";
+    notification.innerHTML = `
+        <div class="notification-content">
+            <h3>⏰ Vaxt Bitdi</h3>
+            <p>Siz düzgün cavab verə bilmədiniz.</p>
+            <button class="btn btn-primary" onclick="this.parentElement.parentElement.remove()">Başa düşdüm</button>
+        </div>
+    `;
+    document.body.appendChild(notification);
+    
+    // Auto-remove after 4 seconds
+    setTimeout(() => {
+        if (notification.parentElement) {
+            notification.remove();
+        }
+    }, 4000);
+}
+
+function showTimeUpFoundAnswerNotification(pointsEarned) {
+    const notification = document.createElement("div");
+    notification.className = "session-restart-notification";
+    notification.style.backgroundColor = "rgba(76, 175, 80, 0.95)";
+    notification.innerHTML = `
+        <div class="notification-content">
+            <h3>⏰ Vaxt Bitdi</h3>
+            <p>Təbriklər! Siz düzgün cavab tapdınız və ${pointsEarned} xal qazandınız!</p>
+            <button class="btn btn-primary" onclick="this.parentElement.parentElement.remove()">Başa düşdüm</button>
+        </div>
+    `;
+    document.body.appendChild(notification);
+    
+    // Auto-remove after 4 seconds
+    setTimeout(() => {
+        if (notification.parentElement) {
+            notification.remove();
+        }
+    }, 4000);
+}
+
+function showCorrectAnswerFoundNotification(pointsEarned) {
+    const notification = document.createElement("div");
+    notification.className = "session-restart-notification";
+    notification.style.backgroundColor = "rgba(76, 175, 80, 0.95)";
+    notification.style.zIndex = "10000";
+    notification.innerHTML = `
+        <div class="notification-content">
+            <h3>🎉 Düzgün Tapıldı!</h3>
+            <p style="font-size: 18px; margin: 15px 0;">Təbriklər! Siz ${pointsEarned} xal qazandınız!</p>
             <button class="btn btn-primary" onclick="this.parentElement.parentElement.remove()">Başa düşdüm</button>
         </div>
     `;
@@ -1064,7 +1346,34 @@ function showNextGameNotification() {
             notification.remove();
         }
     }, 3000);
+}
+
+function showPlayerJoinedNotification(newPlayers) {
+    const notification = document.createElement("div");
+    notification.className = "session-restart-notification";
+    notification.style.backgroundColor = "rgba(33, 150, 243, 0.95)";
+    const playersText = newPlayers.length === 1 
+        ? `<strong>${newPlayers[0]}</strong> oyuna qoşuldu!` 
+        : `${newPlayers.length} oyunçu qoşuldu: ${newPlayers.map(p => `<strong>${p}</strong>`).join(', ')}`;
+    notification.innerHTML = `
+        <div class="notification-content">
+            <h3>👥 Yeni Oyunçu Qoşuldu!</h3>
+            <p>${playersText}</p>
+            <button class="btn btn-primary" onclick="this.parentElement.parentElement.remove()">Başa düşdüm</button>
+        </div>
+    `;
+    document.body.appendChild(notification);
     
+    // Auto-remove after 4 seconds
+    setTimeout(() => {
+        if (notification.parentElement) {
+            notification.remove();
+        }
+    }, 4000);
+}
+
+function showNextGameNotification() {
+    // This function is kept for backward compatibility but now uses specific functions
     // Reset UI for next game
     guessInput.disabled = false;
     submitGuessBtn.disabled = false;
