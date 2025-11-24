@@ -65,6 +65,7 @@ let isArtist = false;
 let lastUserId = null;
 let autoSaveTimeout = null;
 let lastSavedDrawing = null;
+let lastReceivedDrawingData = null; // Track last received drawing data from server
 ctx.strokeStyle = currentColor;
 ctx.lineWidth = currentBrushSize;
 ctx.lineCap = "round";
@@ -119,7 +120,7 @@ function draw(e) {
         }
         autoSaveTimeout = setTimeout(async () => {
             await autoSaveDrawing();
-        }, 500); // Save every 500ms while drawing
+        }, 300); // Save every 300ms while drawing for better real-time sync
     }
 }
 
@@ -602,7 +603,7 @@ async function handleTimeUp() {
 function startPolling() {
     if (pollingInterval) clearInterval(pollingInterval);
     
-    // Poll more frequently for real-time updates (every 1 second)
+    // Poll more frequently for real-time drawing updates (every 500ms for better sync)
     // But only if session is active
     pollingInterval = setInterval(async () => {
         if (currentSession && currentSession.id) {
@@ -619,7 +620,7 @@ function startPolling() {
             clearInterval(pollingInterval);
             pollingInterval = null;
         }
-    }, 1000);
+    }, 500); // Reduced from 1000ms to 500ms for better real-time sync
 }
 
 async function refreshSessionInfo() {
@@ -752,30 +753,43 @@ async function refreshSessionInfo() {
         currentSession = session;
         
         // For non-artist: show live drawing in canvas (readonly)
+        // Only update if drawing data has changed
         if (session.drawingData && !isArtist && viewerCanvas) {
+            // Only update if drawing data actually changed
+            if (session.drawingData !== lastReceivedDrawingData) {
+                lastReceivedDrawingData = session.drawingData;
+                const viewerCtx = viewerCanvas.getContext("2d");
+                const img = new Image();
+                img.onload = () => {
+                    // Calculate size to fit container without scrollbar
+                    const container = viewerCanvas.parentElement;
+                    const maxWidth = container ? container.clientWidth - 30 : 800;
+                    const maxHeight = 500;
+                    const aspectRatio = img.width / img.height;
+                    
+                    let newWidth = Math.min(maxWidth, img.width);
+                    let newHeight = newWidth / aspectRatio;
+                    
+                    if (newHeight > maxHeight) {
+                        newHeight = maxHeight;
+                        newWidth = newHeight * aspectRatio;
+                    }
+                    
+                    viewerCanvas.width = newWidth;
+                    viewerCanvas.height = newHeight;
+                    viewerCtx.clearRect(0, 0, viewerCanvas.width, viewerCanvas.height);
+                    viewerCtx.drawImage(img, 0, 0, newWidth, newHeight);
+                };
+                img.onerror = () => {
+                    console.error("Failed to load drawing image");
+                };
+                img.src = session.drawingData;
+            }
+        } else if (!session.drawingData && !isArtist && viewerCanvas) {
+            // Clear canvas if no drawing data
             const viewerCtx = viewerCanvas.getContext("2d");
-            const img = new Image();
-            img.onload = () => {
-                // Calculate size to fit container without scrollbar
-                const container = viewerCanvas.parentElement;
-                const maxWidth = container ? container.clientWidth - 30 : 800;
-                const maxHeight = 500;
-                const aspectRatio = img.width / img.height;
-                
-                let newWidth = Math.min(maxWidth, img.width);
-                let newHeight = newWidth / aspectRatio;
-                
-                if (newHeight > maxHeight) {
-                    newHeight = maxHeight;
-                    newWidth = newHeight * aspectRatio;
-                }
-                
-                viewerCanvas.width = newWidth;
-                viewerCanvas.height = newHeight;
-                viewerCtx.clearRect(0, 0, viewerCanvas.width, viewerCanvas.height);
-                viewerCtx.drawImage(img, 0, 0, newWidth, newHeight);
-            };
-            img.src = session.drawingData;
+            viewerCtx.clearRect(0, 0, viewerCanvas.width, viewerCanvas.height);
+            lastReceivedDrawingData = null;
         }
         
         // Check if session was restarted (new word, new artist)
