@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="az">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Draw & Guess - Interactive drawing and guessing game"
+    />
+    <title>🎨 D&G</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>🎨 Şəkil Tapmaca</h1>
+        <div class="user-info">
+          <div class="user-id-section">
+            <label for="userId" class="input-label"
+              >İstifadəçi ID-nizi daxil edin:</label
+            >
+            <input
+              type="text"
+              id="userId"
+              placeholder="Məsələn: user-1, user-2..."
+              value="user-1"
+            />
+          </div>
+          <div class="action-buttons">
+            <div class="action-group">
+              <h3 class="action-title">🎮 Yeni Oyun Başlat</h3>
+              <p class="action-description">İlk oyunçu olun və rəsm çəkin</p>
+              <button id="startBtn" class="btn btn-primary">
+                Yeni Oyun Başlat
+              </button>
+            </div>
+            <div class="action-divider">və ya</div>
+            <div class="action-group">
+              <h3 class="action-title">👥 Oyunçu Qoşul</h3>
+              <p class="action-description">
+                Session ID ilə mövcud oyuna qoşulun
+              </p>
+              <div class="join-section">
+                <input
+                  type="text"
+                  id="joinSessionId"
+                  placeholder="Session ID-ni buraya yazın"
+                />
+                <button id="joinBtn" class="btn btn-secondary">Qoşul</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div id="gameArea" class="game-area" style="display: none">
+        <div
+          id="sessionShareBox"
+          class="session-share-box"
+          style="display: none"
+        >
+          <h3>📋 Digər oyunçuları dəvət edin</h3>
+          <p class="share-subtitle">
+            Bu Session ID-ni digər oyunçularla paylaşın
+          </p>
+          <div class="session-id-container">
+            <input type="text" id="sessionIdToCopy" readonly />
+            <button id="copySessionBtn" class="btn btn-primary">
+              📋 Kopyala
+            </button>
+          </div>
+          <div class="join-instructions">
+            <h4>👥 İkinci oyunçu necə qoşulur?</h4>
+            <ol>
+              <li>
+                İstifadəçi ID-ni daxil edin (məsələn: <strong>user-2</strong>)
+              </li>
+              <li>Yuxarıdakı Session ID-ni kopyalayın</li>
+              <li>
+                Session ID-ni "Oyunçu Qoşul" bölməsindəki input-a yapışdırın
+              </li>
+              <li>"Qoşul" düyməsini basın</li>
+            </ol>
+          </div>
+        </div>
+        <div class="game-info">
+          <div class="game-progress">
+            <span
+              >Oyun: <span id="currentGame">1</span>/<span id="maxGames"
+                >5</span
+              ></span
+            >
+          </div>
+          <div class="timer-container">
+            <span>⏱️ Qalan vaxt:</span>
+            <span id="timer">60</span> saniyə
+          </div>
+          <div
+            id="wordDisplay"
+            class="word-display"
+            style="display: none"
+          ></div>
+          <div id="scoreDisplay" class="score-display">
+            Xal: <span id="score">0</span>
+          </div>
+        </div>
+
+        <div class="main-content">
+          <div class="drawing-section">
+            <h2>Rəsm Çəkin</h2>
+            <div class="canvas-container">
+              <canvas id="canvas" width="800" height="600"></canvas>
+            </div>
+            <div class="drawing-controls">
+              <div class="color-picker">
+                <label>Rəng:</label>
+                <input type="color" id="colorPicker" value="#000000" />
+                <button
+                  class="color-btn"
+                  data-color="#000000"
+                  style="background: #000000"
+                ></button>
+                <button
+                  class="color-btn"
+                  data-color="#FF0000"
+                  style="background: #ff0000"
+                ></button>
+                <button
+                  class="color-btn"
+                  data-color="#0000FF"
+                  style="background: #0000ff"
+                ></button>
+                <button
+                  class="color-btn"
+                  data-color="#00FF00"
+                  style="background: #00ff00"
+                ></button>
+                <button
+                  class="color-btn"
+                  data-color="#FFFF00"
+                  style="background: #ffff00"
+                ></button>
+                <button
+                  class="color-btn"
+                  data-color="#FF00FF"
+                  style="background: #ff00ff"
+                ></button>
+              </div>
+              <div class="brush-size">
+                <label>Fırça ölçüsü:</label>
+                <input type="range" id="brushSize" min="1" max="20" value="5" />
+                <span id="brushSizeValue">5</span>
+              </div>
+              <button id="clearBtn" class="btn btn-secondary">Təmizlə</button>
+              <button id="saveDrawingBtn" class="btn btn-primary">
+                Rəsmi Saxla
+              </button>
+            </div>
+          </div>
+
+          <div
+            id="playersListSection"
+            class="players-list-section"
+            style="display: none"
+          >
+            <h2>👥 Oyunçular</h2>
+            <div id="playersList" class="players-list">
+              <p class="no-players">Hələ oyunçu yoxdur</p>
+            </div>
+          </div>
+
+          <div class="guessing-section">
+            <h2>Təxmin Edin</h2>
+            <div id="sessionInfo" class="session-info">
+              <p>Session ID: <span id="sessionId"></span></p>
+              <p>Artist ID: <span id="artistId"></span></p>
+            </div>
+            <div
+              id="viewerCanvasContainer"
+              class="viewer-canvas-container"
+              style="display: none"
+            >
+              <h3>🎨 Live Drawing</h3>
+              <div class="canvas-container">
+                <canvas id="viewerCanvas" width="800" height="600"></canvas>
+              </div>
+            </div>
+            <div class="guess-input">
+              <input
+                type="text"
+                id="guessInput"
+                placeholder="Təxmininizi yazın..."
+              />
+              <button id="submitGuessBtn" class="btn btn-primary">
+                Göndər
+              </button>
+            </div>
+            <div id="guessesList" class="guesses-list">
+              <h3>Təxminlər:</h3>
+              <ul id="guessesUl"></ul>
+            </div>
+            <div id="resultMessage" class="result-message"></div>
+          </div>
+        </div>
+
+        <div id="drawingDisplay" class="drawing-display" style="display: none">
+          <h2>Çəkilmiş Rəsm</h2>
+          <img id="drawingImage" alt="Drawing" />
+        </div>
+
+        <div id="gameEndBox" class="game-end-box" style="display: none">
+          <h2>🎮 Oyun Bitdi!</h2>
+          <div id="finalResults" class="final-results"></div>
+          <button
+            id="newGameBtn"
+            class="btn btn-primary"
+            style="margin-top: 20px; font-size: 1.2em; padding: 15px 30px"
+          >
+            🎨 Yeni Oyun Başlat
+          </button>
+        </div>
+      </div>
+
+      <div id="waitingArea" class="waiting-area" style="display: none">
+        <h2>Oyunçu Gözləyirik...</h2>
+        <p>
+          Session ID-ni digər oyunçularla paylaşın:
+          <strong id="waitingSessionId"></strong>
+        </p>
+        <p>Digər oyunçular təxmin etməyə başlayanda rəsm burada görünəcək.</p>
+      </div>
+    </div>
+
+    <div id="timeUpModal" class="modal" style="display: none">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>⏰ Vaxt Bitdi!</h2>
+        </div>
+        <div class="modal-body">
+          <div id="timeUpResults" class="time-up-results"></div>
+        </div>
+        <div class="modal-footer">
+          <button id="confirmNewGameBtn" class="btn btn-primary">
+            Yeni Oyun Başlat
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="newGameModal" class="modal" style="display: none">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>🎨 Yeni Oyun</h2>
+        </div>
+        <div class="modal-body">
+          <p>Yeni oyun başlatmaq istəyirsiniz?</p>
+          <p class="modal-hint">
+            Bütün məlumatlar təmizlənəcək və yeni söz seçiləcək.
+          </p>
+        </div>
+        <div class="modal-footer">
+          <button id="yesNewGameBtn" class="btn btn-primary">
+            Bəli, Başlat
+          </button>
+          <button id="noNewGameBtn" class="btn btn-secondary">Xeyr</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="gameCompletedModal" class="modal" style="display: none">
+      <div class="modal-content game-completed-modal">
+        <div class="modal-header">
+          <h2>🎉 Bütün Oyunlar Tamamlandı!</h2>
+        </div>
+        <div class="modal-body">
+          <div id="gameCompletedResults" class="game-completed-results"></div>
+        </div>
+        <div class="modal-footer">
+          <button id="goToHomeBtn" class="btn btn-primary">
+            Ana Səhifəyə Qayıt
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
