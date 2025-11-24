@@ -27,6 +27,7 @@ export function startSession(req: Request, res: Response) {
       maxGames: 5,
       gameHistory: [],
       totalScores: {},
+      players: [artistId], // Artist is the first player
     };
 
     createSession(session);
@@ -141,12 +142,26 @@ export function submitGuess(req: Request, res: Response) {
       pointsEarned,
     };
 
+    // Add user to players list if not already there
+    const currentPlayers = session.players || [];
+    if (!currentPlayers.includes(userId)) {
+      currentPlayers.push(userId);
+    }
+
     const updatedGuesses = [...session.guesses, newGuess];
-    updateSession(id, { guesses: updatedGuesses });
+    updateSession(id, { guesses: updatedGuesses, players: currentPlayers });
 
     if (isCorrect) {
       // Game ended with correct guess - save game result and start next game
-      finishCurrentGameAndStartNext(id, session);
+      // First update with new guess and players, then finish game
+      const sessionWithNewGuess = getSession(id);
+      if (sessionWithNewGuess) {
+        finishCurrentGameAndStartNext(id, sessionWithNewGuess);
+      } else {
+        finishCurrentGameAndStartNext(id, session);
+      }
+      
+      // Get updated session after finishing current game and starting next
       const updatedSession = getSession(id);
       
       // Return info about next game or completion
@@ -169,6 +184,7 @@ export function submitGuess(req: Request, res: Response) {
         nextGameStarted: true,
         currentGame: updatedSession?.currentGame || 1,
         maxGames: updatedSession?.maxGames || 5,
+        newWord: updatedSession?.word, // Send new word for artist
       });
       return;
     }
@@ -246,6 +262,9 @@ function finishCurrentGameAndStartNext(sessionId: string, session: DrawingSessio
   const now = new Date();
   const endsAt = new Date(now.getTime() + 60000); // 60 seconds per game
 
+  // Preserve players list from latest session
+  const preservedPlayers = latestSession.players || [];
+
   updateSession(sessionId, {
     word: newWord.word,
     drawingData: '',
@@ -257,6 +276,7 @@ function finishCurrentGameAndStartNext(sessionId: string, session: DrawingSessio
     maxGames: maxGames,
     gameHistory,
     totalScores,
+    players: preservedPlayers, // Keep existing players
   });
 }
 
@@ -333,6 +353,19 @@ export function getSessionInfo(req: Request, res: Response) {
     const isArtist = req.query.userId === session.artistId;
     const showWord = isArtist || !session.isActive;
     
+    // Add current user to players list if they're viewing the session
+    const currentUserId = req.query.userId as string;
+    const currentPlayers = session.players || [];
+    if (currentUserId && !currentPlayers.includes(currentUserId) && currentUserId !== session.artistId) {
+      currentPlayers.push(currentUserId);
+      updateSession(id, { players: currentPlayers });
+      // Refresh session to get updated players list
+      session = getSession(id);
+      if (!session) {
+        return res.status(404).json({ error: 'Session tapılmadı' });
+      }
+    }
+    
     res.json({
       session: {
         id: session.id,
@@ -355,6 +388,7 @@ export function getSessionInfo(req: Request, res: Response) {
         totalScores: session.totalScores || {},
         gameHistory: session.gameHistory || [],
         allGamesCompleted: !session.isActive && (session.currentGame || 0) >= (session.maxGames || 5),
+        players: session.players || [],
       },
     });
   } catch (error) {

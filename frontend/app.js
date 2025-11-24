@@ -350,11 +350,37 @@ async function submitGuess() {
                     }
                 }, 1500);
             } else if (data.nextGameStarted) {
-                // Wait a bit then refresh and show next game notification
+                // Next game started - for artist, clear canvas and prepare for new game
+                if (isArtist) {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    lastSavedDrawing = null;
+                    saveDrawingBtn.disabled = false;
+                    guessInput.disabled = false;
+                    submitGuessBtn.disabled = false;
+                    
+                    // Update word display if new word is provided
+                    if (data.newWord && wordDisplay) {
+                        wordDisplay.textContent = `Word: ${data.newWord}`;
+                        wordDisplay.style.display = "block";
+                    }
+                }
+                
+                // Show notification immediately
+                showNextGameNotification();
+                
+                // Wait a bit then refresh to get full session info
                 setTimeout(async () => {
                     await refreshSessionInfo();
-                    showNextGameNotification();
-                }, 1500);
+                    
+                    // For artist, ensure everything is enabled
+                    if (isArtist && currentSession && currentSession.isActive) {
+                        guessInput.disabled = false;
+                        submitGuessBtn.disabled = false;
+                        saveDrawingBtn.disabled = false;
+                        resultMessage.textContent = "";
+                        resultMessage.className = "";
+                    }
+                }, 1000);
             } else {
                 // Just refresh
                 setTimeout(async () => {
@@ -382,6 +408,42 @@ function addGuessToList(userId, guess, isCorrect, points) {
         ${isCorrect ? `<span class="points">+${points} xal</span>` : ""}
     `;
     guessesUl.appendChild(li);
+}
+
+function updatePlayersList(session) {
+    if (!playersList || !session) {
+        console.log("updatePlayersList: playersList or session missing", { playersList, session });
+        return;
+    }
+    
+    playersList.innerHTML = "";
+    
+    // Always include artist in the list
+    const allPlayers = session.players && session.players.length > 0 
+        ? [...new Set([session.artistId, ...session.players])] // Remove duplicates, artist first
+        : [session.artistId];
+    
+    if (allPlayers.length > 0) {
+        allPlayers.forEach((playerId) => {
+            const li = document.createElement("li");
+            const isArtistPlayer = playerId === session.artistId;
+            li.className = isArtistPlayer ? "player-item artist" : "player-item";
+            const playerScore = session.totalScores && session.totalScores[playerId] 
+                ? session.totalScores[playerId] 
+                : 0;
+            li.innerHTML = `
+                <span class="player-name">${playerId}</span>
+                ${isArtistPlayer ? '<span class="artist-badge">🎨 Artist</span>' : ''}
+                <span class="player-score">${playerScore} xal</span>
+            `;
+            playersList.appendChild(li);
+        });
+    } else {
+        const li = document.createElement("li");
+        li.textContent = "Hələ heç kim qoşulmayıb";
+        li.className = "player-item empty";
+        playersList.appendChild(li);
+    }
 }
 
 function startTimer(endTime) {
@@ -539,6 +601,24 @@ async function refreshSessionInfo() {
         if (isArtist && session.word) {
             wordDisplay.textContent = `Word: ${session.word}`;
             wordDisplay.style.display = "block";
+            
+            // Check if this is a new game (different startedAt time or different word)
+            const previousStartedAt = currentSession?.startedAt;
+            const previousWord = currentSession?.word;
+            const isNewGame = (previousStartedAt && session.startedAt && 
+                new Date(previousStartedAt).getTime() !== new Date(session.startedAt).getTime()) ||
+                (previousWord && previousWord !== session.word);
+            
+            // If new game started, clear canvas and reset drawing
+            if (isNewGame && currentSession) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                lastSavedDrawing = null;
+                saveDrawingBtn.disabled = false;
+                guessInput.disabled = false;
+                submitGuessBtn.disabled = false;
+                resultMessage.textContent = "";
+                resultMessage.className = "";
+            }
         }
         
         currentSession = session;
@@ -597,9 +677,14 @@ async function refreshSessionInfo() {
         const totalScore = session.totalScores && session.totalScores[userId] ? session.totalScores[userId] : 0;
         scoreDisplay.textContent = totalScore;
         
-        // Update players list for artist
-        if (isArtist && playersListSection && playersList) {
-            updatePlayersList(session);
+        // Update players list for artist - always show if artist
+        if (isArtist) {
+            if (playersListSection) {
+                playersListSection.style.display = "block";
+            }
+            if (playersList) {
+                updatePlayersList(session);
+            }
         }
         
         // Check if game ended and next game should start

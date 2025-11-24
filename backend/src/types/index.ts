@@ -11,6 +11,7 @@ export interface DrawingSession {
   maxGames: number; // Total games in session (5)
   gameHistory: GameResult[]; // History of completed games
   totalScores: Record<string, number>; // Total scores per user
+  players: string[]; // List of player IDs who joined the session
 }
 
 export interface GameResult {
