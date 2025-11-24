@@ -3,8 +3,8 @@ import cors from 'cors';
 import pino from 'pino';
 import pinoHttp from 'pino-http';
 import { config } from 'dotenv';
-import sessionRoutes from '../backend/src/routes/sessionRoutes.js';
-import { getAllSessions, updateSession } from '../backend/src/storage/sessions.js';
+import sessionRoutes from '../backend/dist/routes/sessionRoutes.js';
+import { getAllSessions, updateSession } from '../backend/dist/storage/sessions.js';
 
 config();
 
